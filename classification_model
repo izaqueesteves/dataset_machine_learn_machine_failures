@@ -1,0 +1,77 @@
+import numpy as np
+import pandas as pd
+from sklearn.neural_network import MLPClassifier
+from sklearn.metrics import accuracy_score, confusion_matrix, classification_report
+from sklearn.model_selection import train_test_split, cross_val_score
+from sklearn.preprocessing import MinMaxScaler
+from scipy import stats
+from imblearn.over_sampling import SMOTE  # Para tratamento de desbalanceamento entre classes
+
+# --- 1. Carregamento e Pré-Processamento Inicial ---
+dados = pd.read_csv('dataset1k+dados_ambiente.csv')
+
+# Substituição de vírgulas por pontos e conversão para float
+cols_to_convert = ['time_repair', 'cost', 'criticality']
+for col in cols_to_convert:
+    dados[col] = dados[col].str.replace(',', '.').astype(float)
+
+# --- 2. Divisão Treino-Teste ANTES da Normalização (gerenciamento de data leakage) ---
+X = dados.drop(columns=['label'])  # Features
+y = dados['label']  # Target
+
+# Divisão estratificada (preserva proporção de classes)
+X_treino, X_teste, y_treino, y_teste = train_test_split(
+    X, y, test_size=0.25, random_state=42, stratify=y
+)
+
+# --- 3. Normalização (após a divisão entre dados de treino e teste) ---
+scaler = MinMaxScaler()
+X_treino = pd.DataFrame(scaler.fit_transform(X_treino), columns=X_treino.columns)
+X_teste = pd.DataFrame(scaler.transform(X_teste), columns=X_teste.columns)
+
+# --- 4. Verificação de Desbalanceamento ---
+print("Distribuição das classes no treino:", y_treino.value_counts())
+print("Distribuição das classes no teste:", y_teste.value_counts())
+
+# Balanceamento com SMOTE (caso a classe minonitaritária inferior a 10%)
+if y_treino.value_counts().min() / y_treino.value_counts().max() < 0.1:  # Se classe minoritária < 10%
+    smote = SMOTE(random_state=42)
+    X_treino, y_treino = smote.fit_resample(X_treino, y_treino)
+
+# --- 5. Treinamento do Modelo ---
+clf = MLPClassifier(
+    solver='sgd',
+    hidden_layer_sizes=(3,),
+    learning_rate_init=0.1,
+    activation='logistic',
+    max_iter=1500,
+    random_state=42
+)
+clf.fit(X_treino, y_treino)
+
+# --- 6. Avaliação Detalhada ---
+# Predições
+y_pred = clf.predict(X_teste)
+y_proba = clf.predict_proba(X_teste)
+
+# Métricas
+print("\n--- Relatório de Classificação ---")
+print(classification_report(y_teste, y_pred))
+
+print("\n--- Matriz de Confusão ---")
+print(confusion_matrix(y_teste, y_pred))
+
+# Validação Cruzada com Intervalos de Confiança
+scores = cross_val_score(clf, X_treino, y_treino, cv=8, scoring='accuracy')
+print("\n--- Validação Cruzada ---")
+print("Acurácia por fold:", scores)
+print("Média:", scores.mean())
+print("Desvio Padrão:", scores.std())
+
+# Intervalo de Confiança (95%)
+confidence = 0.95
+n = len(scores)
+mean = np.mean(scores)
+std_err = stats.sem(scores)
+ci = stats.t.interval(confidence, n-1, loc=mean, scale=std_err)
+print(f"Intervalo de Confiança (95%): [{ci[0]:.4f}, {ci[1]:.4f}]")
